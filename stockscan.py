@@ -159,6 +159,38 @@ HTML = """<!DOCTYPE html>
   .news-headline { font-size:0.85rem; line-height:1.5; color:var(--text); text-decoration:none; }
   .news-headline:hover { color:var(--accent); }
   .news-meta { font-family:'Space Mono',monospace; font-size:0.6rem; color:var(--muted); margin-top:0.3rem; }
+  .footer-support {
+    margin-top: 2rem;
+    padding: 1.5rem 2rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    text-align: center;
+    background: var(--surface);
+  }
+  .footer-support .made-by {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.6rem;
+    color: var(--muted);
+    letter-spacing: 2px;
+    margin-bottom: 0.8rem;
+  }
+  .footer-support .support-msg {
+    font-size: 0.85rem;
+    color: var(--text);
+    margin-bottom: 0.8rem;
+    line-height: 1.6;
+  }
+  .footer-support .account {
+    font-family: 'Space Mono', monospace;
+    font-size: 0.9rem;
+    color: var(--accent);
+    letter-spacing: 1px;
+    padding: 0.6rem 1.2rem;
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    display: inline-block;
+    margin-top: 0.3rem;
+  }
   .disclaimer { padding:1rem; border:1px solid var(--border); border-radius:4px; font-family:'Space Mono',monospace; font-size:0.65rem; color:var(--muted); line-height:1.6; }
   .disclaimer strong { color:var(--warn); }
 
@@ -210,6 +242,16 @@ HTML = """<!DOCTYPE html>
   <div class="disclaimer">
     <strong>⚠ 투자 경고</strong> — 이 분석은 기술적 지표 기반 참고용 정보이며 투자 권유가 아닙니다.
     실제 투자 결정은 본인의 판단과 책임 하에 이루어져야 합니다. 과거 패턴이 미래 수익을 보장하지 않습니다.
+  </div>
+  <div class="footer-support">
+    <div class="made-by">MADE BY 김태훈</div>
+    <div class="support-msg">
+      무료로 배포 가능하나, 도움이 되셨다면 후원 부탁드립니다 🙏<br>
+      소중한 후원이 서비스 유지에 큰 힘이 됩니다!
+    </div>
+    <div class="account">
+      카카오뱅크 3333-03-5584101 · 김태훈
+    </div>
   </div>
 </main>
 
