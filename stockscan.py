@@ -12,16 +12,7 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 import json
-import requests
-from requests.adapters import HTTPAdapter
 
-# 야후 파이낸스 차단 우회
-session = requests.Session()
-session.headers.update({
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-    'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-})
 
 app = Flask(__name__)
 
@@ -461,7 +452,7 @@ def analyze():
         return jsonify({'error': '티커를 입력해주세요.'})
 
     try:
-        stock = yf.Ticker(ticker, session=session)
+        stock = yf.Ticker(ticker)
         hist = stock.history(period='4mo')
         
         if hist.empty or len(hist) < 30:
@@ -625,7 +616,7 @@ def get_news():
     if not ticker:
         return jsonify({'error': '티커를 입력해주세요.'})
     try:
-        stock = yf.Ticker(ticker, session=session)
+        stock = yf.Ticker(ticker)
         news = stock.news or []
         result = []
         for item in news[:8]:
