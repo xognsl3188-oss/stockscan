@@ -1,20 +1,23 @@
 """
-STOCKSCAN — 실시간 주식 기술적 분석기
-=====================================
+STOCKSCAN — 실시간 주식 기술적 분석기 (Finnhub API)
+=====================================================
 실행 방법:
-  1. 라이브러리 설치:  pip install yfinance flask pandas numpy
-  2. 실행:             python stockscan.py
-  3. 브라우저에서:     http://localhost:5000
+  1. 라이브러리 설치:  pip install flask pandas numpy requests
+  2. 환경변수 설정:    set FINNHUB_API_KEY=your_api_key
+  3. 실행:             python stockscan.py
+  4. 브라우저에서:     http://localhost:5000
 """
 
 from flask import Flask, jsonify, request
-import yfinance as yf
 import pandas as pd
 import numpy as np
-import json
-
+import requests
+import os
+import datetime
 
 app = Flask(__name__)
+
+FINNHUB_KEY = os.environ.get('FINNHUB_API_KEY', '')
 
 HTML = """<!DOCTYPE html>
 <html lang="ko">
@@ -49,16 +52,17 @@ HTML = """<!DOCTYPE html>
   .logo span { color:var(--text); opacity:0.5; }
   .live-badge {
     margin-left:auto; display:flex; align-items:center; gap:0.5rem;
-    font-family:'Space Mono',monospace; font-size:0.7rem; color:var(--accent);
+    font-family:'Space Mono',monospace; font-size:0.65rem; color:var(--accent);
   }
   .dot { width:8px; height:8px; border-radius:50%; background:var(--accent); animation:pulse 2s infinite; }
   @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.8)} }
 
-  main { max-width:1100px; margin:0 auto; padding:2rem; }
+  main { max-width:900px; margin:0 auto; padding:2rem; }
 
   .search-section {
     background:var(--surface); border:1px solid var(--border);
-    border-radius:4px; padding:2rem; margin-bottom:2rem; position:relative; overflow:hidden;
+    border-radius:4px; padding:1.5rem; margin-bottom:1.5rem;
+    position:relative; overflow:hidden;
   }
   .search-section::before {
     content:''; position:absolute; top:0; left:0; right:0; height:2px;
@@ -66,87 +70,83 @@ HTML = """<!DOCTYPE html>
     animation:scan 3s linear infinite;
   }
   @keyframes scan { 0%{transform:translateX(-100%)} 100%{transform:translateX(100%)} }
-
-  .search-label { font-family:'Space Mono',monospace; font-size:0.7rem; color:var(--accent); letter-spacing:3px; margin-bottom:1rem; }
-  .search-row { display:flex; gap:1rem; align-items:stretch; }
+  .search-label { font-family:'Space Mono',monospace; font-size:0.65rem; color:var(--accent); letter-spacing:3px; margin-bottom:1rem; }
   .search-input {
-    flex:1; background:var(--bg); border:1px solid var(--border); border-radius:4px;
-    color:var(--text); font-family:'Space Mono',monospace; font-size:1.2rem;
-    padding:1rem 1.5rem; text-transform:uppercase; letter-spacing:3px; outline:none;
-    transition:border-color 0.2s,box-shadow 0.2s;
+    width:100%; background:var(--bg); border:1px solid var(--border); border-radius:2px;
+    color:var(--text); font-family:'Space Mono',monospace; font-size:1.1rem;
+    padding:1rem 1.2rem; outline:none; transition:border-color 0.2s,box-shadow 0.2s;
+    text-transform:uppercase; letter-spacing:2px; margin-bottom:1rem;
   }
   .search-input:focus { border-color:var(--accent); box-shadow:var(--glow); }
-  .search-input::placeholder { color:var(--muted); font-size:0.85rem; letter-spacing:1px; text-transform:none; }
-
-  .market-toggle { display:flex; border:1px solid var(--border); border-radius:4px; overflow:hidden; }
-  .market-btn { padding:0 1.5rem; background:transparent; border:none; cursor:pointer; font-family:'Space Mono',monospace; font-size:0.8rem; color:var(--muted); transition:all 0.2s; }
-  .market-btn.active { background:var(--accent); color:var(--bg); font-weight:700; }
-
-  .analyze-btn {
-    padding:1rem 2rem; background:var(--accent); color:var(--bg);
-    border:none; border-radius:4px; cursor:pointer;
-    font-family:'Bebas Neue',sans-serif; font-size:1.3rem; letter-spacing:3px;
-    transition:all 0.2s; white-space:nowrap;
+  .bottom-row { display:flex; gap:1rem; align-items:center; }
+  .market-toggle { display:flex; border:1px solid var(--border); border-radius:2px; overflow:hidden; }
+  .market-btn {
+    padding:0.8rem 1.5rem; background:transparent; border:none; cursor:pointer;
+    font-family:'Space Mono',monospace; font-size:0.75rem; color:var(--muted); transition:all 0.2s;
   }
-  .analyze-btn:hover { box-shadow:var(--glow); transform:translateY(-1px); }
+  .market-btn.active { background:var(--accent); color:var(--bg); font-weight:700; }
+  .analyze-btn {
+    flex:1; padding:0.9rem; background:var(--accent); color:var(--bg); border:none;
+    border-radius:2px; font-family:'Bebas Neue',sans-serif; font-size:1.3rem;
+    letter-spacing:3px; cursor:pointer; transition:all 0.2s;
+  }
+  .analyze-btn:hover { opacity:0.9; transform:translateY(-1px); }
   .analyze-btn:disabled { opacity:0.4; cursor:not-allowed; transform:none; }
-
   .quick-picks { margin-top:1rem; display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center; }
+  .qpick-label { font-family:'Space Mono',monospace; font-size:0.6rem; color:var(--muted); }
   .quick-btn {
     padding:0.3rem 0.8rem; background:transparent; border:1px solid var(--border);
     border-radius:2px; color:var(--muted); font-family:'Space Mono',monospace;
-    font-size:0.7rem; cursor:pointer; transition:all 0.2s; letter-spacing:1px;
+    font-size:0.65rem; cursor:pointer; transition:all 0.2s;
   }
   .quick-btn:hover { border-color:var(--accent); color:var(--accent); }
 
   .loading { text-align:center; padding:4rem; display:none; }
-  .loading-text { font-family:'Space Mono',monospace; font-size:0.8rem; color:var(--accent); letter-spacing:3px; animation:blink 1s infinite; }
+  .loading-text { font-family:'Space Mono',monospace; font-size:0.75rem; color:var(--accent); letter-spacing:3px; animation:blink 1s infinite; }
   @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
   .loading-bar { width:200px; height:2px; background:var(--border); margin:1rem auto; border-radius:1px; overflow:hidden; }
-  .loading-fill { height:100%; background:var(--accent); animation:loading 1.5s ease-in-out infinite; }
-  @keyframes loading { 0%{width:0;margin-left:0} 50%{width:100%;margin-left:0} 100%{width:0;margin-left:100%} }
+  .loading-fill { height:100%; background:var(--accent); animation:ld 1.5s ease-in-out infinite; }
+  @keyframes ld { 0%{width:0;margin-left:0} 50%{width:100%;margin-left:0} 100%{width:0;margin-left:100%} }
 
-  #results { display:none; animation:fadeIn 0.5s ease; }
-  @keyframes fadeIn { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:translateY(0)} }
+  #results { display:none; animation:fadeIn 0.4s ease; }
+  @keyframes fadeIn { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
 
-  .verdict-card { padding:2rem; border-radius:4px; margin-bottom:1.5rem; border:1px solid; position:relative; overflow:hidden; }
-  .verdict-card.buy { border-color:var(--accent); background:rgba(0,255,136,0.05); }
-  .verdict-card.sell { border-color:var(--danger); background:rgba(255,59,92,0.05); }
-  .verdict-card.hold { border-color:var(--warn); background:rgba(255,184,0,0.05); }
-
-  .verdict-header { display:flex; align-items:center; gap:1.5rem; margin-bottom:1.5rem; flex-wrap:wrap; }
-  .verdict-signal { font-family:'Bebas Neue',sans-serif; font-size:4rem; line-height:1; letter-spacing:4px; }
+  .verdict-card { padding:2rem; border-radius:4px; margin-bottom:1.5rem; border:1px solid; }
+  .verdict-card.buy { border-color:var(--accent); background:rgba(0,255,136,0.04); }
+  .verdict-card.sell { border-color:var(--danger); background:rgba(255,59,92,0.04); }
+  .verdict-card.hold { border-color:var(--warn); background:rgba(255,184,0,0.04); }
+  .verdict-header { display:flex; align-items:flex-start; gap:2rem; margin-bottom:1.5rem; }
+  .verdict-signal { font-family:'Bebas Neue',sans-serif; font-size:3.5rem; line-height:1; letter-spacing:3px; flex-shrink:0; }
   .buy .verdict-signal { color:var(--accent); text-shadow:var(--glow); }
   .sell .verdict-signal { color:var(--danger); text-shadow:var(--glow-red); }
   .hold .verdict-signal { color:var(--warn); }
   .verdict-meta { flex:1; }
-  .verdict-ticker { font-family:'Space Mono',monospace; font-size:1.3rem; }
-  .verdict-name { font-size:0.85rem; color:var(--muted); margin-top:0.2rem; }
-  .verdict-price { font-family:'Space Mono',monospace; font-size:2rem; font-weight:700; margin-top:0.3rem; }
-  .verdict-change { font-family:'Space Mono',monospace; font-size:0.9rem; margin-top:0.2rem; }
+  .verdict-ticker { font-family:'Space Mono',monospace; font-size:1.1rem; color:var(--muted); }
+  .verdict-name { font-size:1.1rem; margin:0.3rem 0; }
+  .verdict-price { font-family:'Space Mono',monospace; font-size:2rem; font-weight:700; }
+  .verdict-change { font-family:'Space Mono',monospace; font-size:0.85rem; margin-top:0.3rem; }
   .pos { color:var(--accent); } .neg { color:var(--danger); }
-
-  .conf-label { font-family:'Space Mono',monospace; font-size:0.65rem; color:var(--muted); letter-spacing:2px; margin-bottom:0.4rem; }
-  .conf-bar { height:4px; background:var(--border); border-radius:2px; }
+  .conf-label { font-family:'Space Mono',monospace; font-size:0.6rem; color:var(--muted); letter-spacing:3px; margin-bottom:0.5rem; }
+  .conf-bar { height:3px; background:var(--border); border-radius:2px; }
   .conf-fill { height:100%; border-radius:2px; transition:width 1s ease; }
   .buy .conf-fill { background:var(--accent); } .sell .conf-fill { background:var(--danger); } .hold .conf-fill { background:var(--warn); }
 
-  .indicators-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:1rem; margin-bottom:1.5rem; }
+  .indicators-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:1rem; margin-bottom:1.5rem; }
+  @media(max-width:600px) { .indicators-grid { grid-template-columns:repeat(2,1fr); } }
   .ind-card { background:var(--surface); border:1px solid var(--border); border-radius:4px; padding:1.2rem; }
   .ind-name { font-family:'Space Mono',monospace; font-size:0.65rem; color:var(--muted); letter-spacing:2px; margin-bottom:0.5rem; }
-  .ind-value { font-family:'Space Mono',monospace; font-size:1.2rem; font-weight:700; }
+  .ind-value { font-family:'Space Mono',monospace; font-size:1.1rem; font-weight:700; }
   .ind-signal { font-size:0.75rem; margin-top:0.3rem; font-family:'Space Mono',monospace; }
+  .ind-desc { margin-top:0.6rem; font-size:0.75rem; color:var(--muted); line-height:1.6; border-top:1px solid var(--border); padding-top:0.6rem; }
   .sig-buy { color:var(--accent); } .sig-sell { color:var(--danger); } .sig-neutral { color:var(--warn); }
 
   .chart-section { background:var(--surface); border:1px solid var(--border); border-radius:4px; padding:1.5rem; margin-bottom:1.5rem; }
   .chart-title { font-family:'Space Mono',monospace; font-size:0.65rem; color:var(--accent); letter-spacing:3px; margin-bottom:1rem; }
+  #priceChart { max-height:300px; }
 
   .summary-box { background:var(--surface); border:1px solid var(--border); border-radius:4px; padding:1.5rem; margin-bottom:1.5rem; }
   .summary-title { font-family:'Space Mono',monospace; font-size:0.65rem; color:var(--muted); letter-spacing:3px; margin-bottom:1rem; }
-  .summary-text { font-size:0.9rem; line-height:1.8; }
-
-  .error-box { background:rgba(255,59,92,0.08); border:1px solid var(--danger); border-radius:4px; padding:1.5rem; color:var(--danger); font-family:'Space Mono',monospace; font-size:0.85rem; }
-
+  .summary-text { font-size:0.95rem; line-height:1.8; }
 
   .news-section { background:var(--surface); border:1px solid var(--border); border-radius:4px; padding:1.5rem; margin-bottom:1.5rem; }
   .news-title { font-family:'Space Mono',monospace; font-size:0.65rem; color:var(--accent); letter-spacing:3px; margin-bottom:1rem; }
@@ -160,58 +160,31 @@ HTML = """<!DOCTYPE html>
   .news-headline { font-size:0.85rem; line-height:1.5; color:var(--text); text-decoration:none; }
   .news-headline:hover { color:var(--accent); }
   .news-meta { font-family:'Space Mono',monospace; font-size:0.6rem; color:var(--muted); margin-top:0.3rem; }
-  .footer-support {
-    margin-top: 2rem;
-    padding: 1.5rem 2rem;
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    text-align: center;
-    background: var(--surface);
-  }
-  .footer-support .made-by {
-    font-family: 'Space Mono', monospace;
-    font-size: 0.6rem;
-    color: var(--muted);
-    letter-spacing: 2px;
-    margin-bottom: 0.8rem;
-  }
-  .footer-support .support-msg {
-    font-size: 0.85rem;
-    color: var(--text);
-    margin-bottom: 0.8rem;
-    line-height: 1.6;
-  }
-  .footer-support .account {
-    font-family: 'Space Mono', monospace;
-    font-size: 0.9rem;
-    color: var(--accent);
-    letter-spacing: 1px;
-    padding: 0.6rem 1.2rem;
-    border: 1px solid var(--accent);
-    border-radius: 4px;
-    display: inline-block;
-    margin-top: 0.3rem;
-  }
-  .disclaimer { padding:1rem; border:1px solid var(--border); border-radius:4px; font-family:'Space Mono',monospace; font-size:0.65rem; color:var(--muted); line-height:1.6; }
-  .disclaimer strong { color:var(--warn); }
 
-  @media(max-width:600px) {
-    .search-row { flex-direction:column; }
-    .verdict-signal { font-size:2.5rem; }
-    .verdict-price { font-size:1.4rem; }
+  .error-box { background:rgba(255,59,92,0.08); border:1px solid var(--danger); border-radius:4px; padding:1.5rem; color:var(--danger); font-family:'Space Mono',monospace; font-size:0.8rem; line-height:1.8; margin-bottom:1.5rem; }
+
+  .disclaimer { padding:1rem; border:1px solid var(--border); border-radius:2px; font-family:'Space Mono',monospace; font-size:0.6rem; color:var(--muted); line-height:1.8; margin-bottom:1rem; }
+
+  .footer-support {
+    margin-top:2rem; padding:1.5rem 2rem;
+    border:1px solid var(--border); border-radius:4px;
+    text-align:center; background:var(--surface);
   }
+  .footer-support .made-by { font-family:'Space Mono',monospace; font-size:0.6rem; color:var(--muted); letter-spacing:2px; margin-bottom:0.8rem; }
+  .footer-support .support-msg { font-size:0.85rem; color:var(--text); margin-bottom:0.8rem; line-height:1.6; }
+  .footer-support .account { font-family:'Space Mono',monospace; font-size:0.9rem; color:var(--accent); letter-spacing:1px; padding:0.6rem 1.2rem; border:1px solid var(--accent); border-radius:4px; display:inline-block; margin-top:0.3rem; }
 </style>
 </head>
 <body>
 <header>
   <div class="logo">STOCK<span>SCAN</span></div>
-  <div class="live-badge"><div class="dot"></div> LIVE DATA · Yahoo Finance</div>
+  <div class="live-badge"><div class="dot"></div>LIVE DATA</div>
 </header>
 <main>
   <div class="search-section">
     <div class="search-label">▶ 종목 입력 / TICKER SYMBOL</div>
-    <div class="search-row">
-      <input class="search-input" id="tickerInput" placeholder="예: IBM, 005930.KS (삼성전자), AAPL" />
+    <input class="search-input" id="tickerInput" placeholder="예: IBM, AAPL, 005930 (삼성전자)" autocomplete="off" autocorrect="off" spellcheck="false" />
+    <div class="bottom-row">
       <div class="market-toggle">
         <button class="market-btn active" id="btnUS" onclick="setMarket('US')">🇺🇸 US</button>
         <button class="market-btn" id="btnKR" onclick="setMarket('KR')">🇰🇷 KR</button>
@@ -219,7 +192,7 @@ HTML = """<!DOCTYPE html>
       <button class="analyze-btn" id="analyzeBtn" onclick="analyze()">SCAN</button>
     </div>
     <div class="quick-picks">
-      <span style="font-family:'Space Mono',monospace;font-size:0.65rem;color:var(--muted)">빠른선택:</span>
+      <span class="qpick-label">빠른 선택:</span>
       <button class="quick-btn" onclick="quick('IBM','US')">IBM</button>
       <button class="quick-btn" onclick="quick('AAPL','US')">AAPL</button>
       <button class="quick-btn" onclick="quick('NVDA','US')">NVDA</button>
@@ -235,24 +208,22 @@ HTML = """<!DOCTYPE html>
   <div class="loading" id="loading">
     <div class="loading-text">FETCHING REAL-TIME DATA...</div>
     <div class="loading-bar"><div class="loading-fill"></div></div>
-    <div class="loading-text" style="font-size:0.6rem;margin-top:0.5rem;color:var(--muted)">Yahoo Finance → RSI · MACD · 볼린저밴드 · 이동평균선</div>
+    <div class="loading-text" style="font-size:0.55rem;margin-top:0.5rem;color:var(--muted)">RSI · MACD · 볼린저밴드 · 이동평균 계산중</div>
   </div>
 
   <div id="results"></div>
 
   <div class="disclaimer">
-    <strong>⚠ 투자 경고</strong> — 이 분석은 기술적 지표 기반 참고용 정보이며 투자 권유가 아닙니다.
-    실제 투자 결정은 본인의 판단과 책임 하에 이루어져야 합니다. 과거 패턴이 미래 수익을 보장하지 않습니다.
+    ⚠ 본 서비스는 기술적 분석 기반의 참고용 정보를 제공하며, 투자 권유가 아닙니다. 실제 투자 결정은 본인의 판단과 책임 하에 이루어져야 합니다. 과거 패턴이 미래 수익을 보장하지 않습니다.
   </div>
+
   <div class="footer-support">
     <div class="made-by">MADE BY 김태훈</div>
     <div class="support-msg">
       무료로 배포 가능하나, 도움이 되셨다면 후원 부탁드립니다 🙏<br>
       소중한 후원이 서비스 유지에 큰 힘이 됩니다!
     </div>
-    <div class="account">
-      카카오뱅크 3333-03-5584101 · 김태훈
-    </div>
+    <div class="account">카카오뱅크 3333-03-5584101 · 김태훈</div>
   </div>
 </main>
 
@@ -275,9 +246,7 @@ function quick(t, m) {
 async function analyze() {
   let ticker = document.getElementById('tickerInput').value.trim().toUpperCase();
   if(!ticker) { alert('종목명을 입력해주세요!'); return; }
-  
-  // KR suffix handling
-  if(currentMarket === 'KR' && !ticker.includes('.')) ticker += '.KS';
+  if(currentMarket === 'KR' && !ticker.includes(':')) ticker = 'KRX:' + ticker;
 
   document.getElementById('results').style.display = 'none';
   document.getElementById('loading').style.display = 'block';
@@ -288,7 +257,7 @@ async function analyze() {
     const data = await res.json();
     document.getElementById('loading').style.display = 'none';
     if(data.error) {
-      document.getElementById('results').innerHTML = `<div class="error-box">❌ ${data.error}<br><br>티커 심볼을 확인해주세요.<br>한국 주식: 종목코드.KS (예: 005930.KS)<br>미국 주식: 심볼 그대로 (예: AAPL)</div>`;
+      document.getElementById('results').innerHTML = `<div class="error-box">❌ ${data.error}<br><br>미국 주식: AAPL, IBM, TSLA<br>한국 주식: KR 선택 후 005930 입력</div>`;
       document.getElementById('results').style.display = 'block';
     } else {
       renderResults(data);
@@ -309,9 +278,9 @@ function renderResults(d) {
 
   const indDesc = {
     'RSI': 'RSI(상대강도지수)는 0~100 값으로 과매수/과매도를 측정해요. 30 이하면 과매도(반등 가능), 70 이상이면 과매수(조정 가능) 신호예요.',
-    '이동평균': '단기(5일)·중기(20일)·장기(60일) 평균 주가를 비교해요. 단기선이 장기선을 위로 뚫으면 골든크로스(상승신호), 아래로 뚫으면 데드크로스(하락신호)예요.',
+    '이동평균': '단기(5일)·중기(20일)·장기(60일) 평균 주가를 비교해요. 단기선이 장기선 위로 올라서면 골든크로스(상승신호), 아래로 내려가면 데드크로스(하락신호)예요.',
     '볼린저밴드': '평균과 표준편차로 상·하단 밴드를 만들어요. 하단 밴드 근처면 저점 반등 가능성, 상단 밴드 근처면 과열 신호예요.',
-    'MACD': '단기·장기 이동평균 차이로 추세 전환을 포착해요. 히스토그램이 양수 전환이면 상승 모멘텀, 음수 전환이면 하락 모멘텀이에요.',
+    'MACD': '단기·장기 이동평균 차이로 추세 전환을 포착해요. 히스토그램이 양수로 전환되면 상승 모멘텀, 음수로 전환되면 하락 모멘텀이에요.',
     '거래량': '현재 거래량을 20일 평균과 비교해요. 주가 상승+거래량 급증은 강한 매수 신호, 주가 하락+거래량 급증은 강한 매도 신호예요.',
     '지지/저항': '최근 20일 최저가(지지선)와 최고가(저항선)를 봐요. 지지선 근처면 반등 가능, 저항선 근처면 조정 가능성이 높아요.'
   };
@@ -324,7 +293,7 @@ function renderResults(d) {
       <div class="ind-name">${s.name}</div>
       <div class="ind-value ${sc}">${ic} ${s.verdict}</div>
       <div class="ind-signal ${sc}">${s.detail}</div>
-      <div style="margin-top:0.6rem;font-size:0.75rem;color:var(--muted);line-height:1.6;border-top:1px solid var(--border);padding-top:0.6rem;">${desc}</div>
+      <div class="ind-desc">${desc}</div>
     </div>`;
   }).join('');
 
@@ -363,29 +332,29 @@ function renderResults(d) {
   `;
   document.getElementById('results').style.display = 'block';
   setTimeout(() => drawChart(d), 100);
-    // 뉴스 가져오기
-    fetch('/news?ticker=' + encodeURIComponent(d.ticker))
-      .then(r => r.json())
-      .then(newsData => {
-        if(newsData.news && newsData.news.length > 0) {
-          const newsHTML = newsData.news.map(n => {
-            const badgeClass = 'badge-' + n.sentiment;
-            return `<div class="news-item">
-              <span class="news-badge ${badgeClass}">${n.sentiment}</span>
-              <div class="news-content">
-                <a href="${n.link}" target="_blank" class="news-headline">${n.title}</a>
-                <div class="news-meta">${n.publisher} · ${n.date}</div>
-              </div>
-            </div>`;
-          }).join('');
-          const newsSection = `<div class="news-section">
-            <div class="news-title">▶ 최근 뉴스 (호재 / 악재)</div>
-            ${newsHTML}
-          </div>`;
-          document.getElementById('results').insertAdjacentHTML('beforeend', newsSection);
-        }
-      }).catch(() => {});
 
+  // 뉴스
+  fetch('/news?ticker=' + encodeURIComponent(d.ticker))
+    .then(r => r.json())
+    .then(newsData => {
+      if(newsData.news && newsData.news.length > 0) {
+        const newsHTML = newsData.news.map(n => {
+          const badgeClass = 'badge-' + n.sentiment;
+          return `<div class="news-item">
+            <span class="news-badge ${badgeClass}">${n.sentiment}</span>
+            <div class="news-content">
+              <a href="${n.link}" target="_blank" class="news-headline">${n.title}</a>
+              <div class="news-meta">${n.publisher} · ${n.date}</div>
+            </div>
+          </div>`;
+        }).join('');
+        const newsSection = `<div class="news-section">
+          <div class="news-title">▶ 최근 뉴스 (호재 / 악재)</div>
+          ${newsHTML}
+        </div>`;
+        document.getElementById('results').insertAdjacentHTML('beforeend', newsSection);
+      }
+    }).catch(() => {});
 }
 
 function drawChart(d) {
@@ -450,32 +419,47 @@ def analyze():
     ticker = request.args.get('ticker', '').upper()
     if not ticker:
         return jsonify({'error': '티커를 입력해주세요.'})
+    if not FINNHUB_KEY:
+        return jsonify({'error': 'API 키가 설정되지 않았습니다. Render 환경변수를 확인해주세요.'})
 
     try:
-        stock = yf.Ticker(ticker)
-        hist = stock.history(period='4mo')
-        
-        if hist.empty or len(hist) < 30:
+        to_ts = int(datetime.datetime.now().timestamp())
+        from_ts = to_ts - 60 * 60 * 24 * 100
+
+        url = f"https://finnhub.io/api/v1/stock/candle?symbol={ticker}&resolution=D&from={from_ts}&to={to_ts}&token={FINNHUB_KEY}"
+        r = requests.get(url, timeout=10)
+        data = r.json()
+
+        if data.get('s') == 'no_data' or not data.get('c'):
             return jsonify({'error': f"'{ticker}' 데이터를 찾을 수 없습니다. 티커 심볼을 확인해주세요."})
 
-        hist = hist.tail(60)
-        closes = hist['Close']
-        info = stock.info
+        closes = pd.Series(data['c'])
+        volumes = pd.Series(data.get('v', [0]*len(data['c'])))
+        timestamps = data['t']
+        dates = [datetime.datetime.fromtimestamp(t).strftime('%Y-%m-%d') for t in timestamps]
 
-        # Current price info
+        closes = closes.tail(60).reset_index(drop=True)
+        volumes = volumes.tail(60).reset_index(drop=True)
+        dates = dates[-60:]
+
         current = float(closes.iloc[-1])
         prev = float(closes.iloc[-2])
         price_change = (current - prev) / prev * 100
-        is_kr = ticker.endswith('.KS') or ticker.endswith('.KQ')
+        is_kr = ticker.startswith('KRX:')
         price_fmt = f"{current:,.0f}원" if is_kr else f"${current:,.2f}"
 
-        # Indicators
+        # 회사 이름
+        try:
+            profile = requests.get(f"https://finnhub.io/api/v1/stock/profile2?symbol={ticker}&token={FINNHUB_KEY}", timeout=5).json()
+            name = profile.get('name', '')
+        except:
+            name = ''
+
         rsi = calc_rsi(closes)
         rsi_val = float(rsi.iloc[-1])
 
         macd_line, signal_line, macd_hist = calc_macd(closes)
         macd_val = float(macd_line.iloc[-1])
-        sig_val = float(signal_line.iloc[-1])
         hist_val = float(macd_hist.iloc[-1])
 
         bb_upper, bb_mid, bb_lower = calc_bollinger(closes)
@@ -490,8 +474,8 @@ def analyze():
         ma20_val = float(ma20.iloc[-1])
         ma60_val = float(ma60.iloc[-1]) if len(closes) >= 60 else float(ma20.iloc[-1])
 
-        vol = float(hist['Volume'].iloc[-1])
-        avg_vol = float(hist['Volume'].mean())
+        vol = float(volumes.iloc[-1])
+        avg_vol = float(volumes.mean())
         vol_ratio = vol / avg_vol if avg_vol > 0 else 1
 
         support = float(closes.tail(20).min())
@@ -499,12 +483,10 @@ def analyze():
         dist_sup = (current - support) / support * 100
         dist_res = (resistance - current) / resistance * 100
 
-        # Scoring
         buy_score = 0
         sell_score = 0
         indicators = []
 
-        # RSI
         if rsi_val < 30:
             buy_score += 2
             indicators.append({'name':'RSI', 'verdict':'매수', 'detail':f'{rsi_val:.1f} — 과매도 구간'})
@@ -514,7 +496,6 @@ def analyze():
         else:
             indicators.append({'name':'RSI', 'verdict':'중립', 'detail':f'{rsi_val:.1f} — 중립'})
 
-        # MA
         if ma5_val > ma20_val and ma20_val > ma60_val:
             buy_score += 2
             indicators.append({'name':'이동평균', 'verdict':'매수', 'detail':'5>20>60 골든크로스'})
@@ -524,7 +505,6 @@ def analyze():
         else:
             indicators.append({'name':'이동평균', 'verdict':'중립', 'detail':'혼재 신호'})
 
-        # Bollinger
         if bb_pos < 15:
             buy_score += 1
             indicators.append({'name':'볼린저밴드', 'verdict':'매수', 'detail':f'하단 근접 ({bb_pos:.0f}%)'})
@@ -534,7 +514,6 @@ def analyze():
         else:
             indicators.append({'name':'볼린저밴드', 'verdict':'중립', 'detail':f'밴드 중간 ({bb_pos:.0f}%)'})
 
-        # MACD
         if hist_val > 0 and macd_val > 0:
             buy_score += 1
             indicators.append({'name':'MACD', 'verdict':'매수', 'detail':'히스토그램 양전환'})
@@ -544,7 +523,6 @@ def analyze():
         else:
             indicators.append({'name':'MACD', 'verdict':'중립', 'detail':'전환점 관찰 중'})
 
-        # Volume
         if vol_ratio > 1.5:
             if price_change > 0:
                 buy_score += 1
@@ -555,7 +533,6 @@ def analyze():
         else:
             indicators.append({'name':'거래량', 'verdict':'중립', 'detail':f'평균 수준 ({vol_ratio:.1f}x)'})
 
-        # Support/Resistance
         if dist_sup < 3:
             buy_score += 1
             indicators.append({'name':'지지/저항', 'verdict':'매수', 'detail':f'지지선 근접 (+{dist_sup:.1f}%)'})
@@ -565,7 +542,6 @@ def analyze():
         else:
             indicators.append({'name':'지지/저항', 'verdict':'중립', 'detail':f'지지 +{dist_sup:.1f}% / 저항 -{dist_res:.1f}%'})
 
-        # Final verdict
         if buy_score > sell_score + 1:
             verdict = '매수'
         elif sell_score > buy_score + 1:
@@ -575,20 +551,18 @@ def analyze():
 
         confidence = max(buy_score, sell_score) / (buy_score + sell_score + 2) * 100
 
-        # Summary
         v_color = {'매수':'<strong style="color:#00ff88">매수 신호</strong>', '매도':'<strong style="color:#ff3b5c">매도 신호</strong>', '관망':'<strong style="color:#ffb800">관망</strong>'}
         summary = f"<strong>{ticker}</strong> 종목 기술적 분석 결과, 전반적으로 {v_color[verdict]}가 우세합니다 (매수 {buy_score}점 vs 매도 {sell_score}점). "
         summary += f"RSI는 {rsi_val:.1f}로 {'과매도 구간으로 기술적 반등 가능성이 있습니다.' if rsi_val<30 else '과매수 구간으로 단기 조정 가능성이 있습니다.' if rsi_val>70 else '중립 구간입니다.'} "
         summary += f"{'단기 이동평균이 중장기선을 상회하며 상승 모멘텀을 보입니다.' if ma5_val>ma20_val else '단기 이동평균이 중장기선을 하회하며 하락 압력이 있습니다.'} "
         summary += f"볼린저밴드 내 위치는 {bb_pos:.0f}%이며, 거래량은 평균 대비 {vol_ratio:.1f}배 수준입니다."
 
-        # Chart data
         def safe_list(s):
-            return [None if np.isnan(v) else round(float(v), 4) for v in s]
+            return [None if (v is None or (isinstance(v, float) and np.isnan(v))) else round(float(v), 4) for v in s]
 
         return jsonify({
             'ticker': ticker,
-            'name': info.get('shortName', info.get('longName', '')),
+            'name': name,
             'current': current,
             'price_fmt': price_fmt,
             'price_change': price_change,
@@ -598,7 +572,7 @@ def analyze():
             'confidence': confidence,
             'indicators': indicators,
             'summary': summary,
-            'dates': [str(d.date()) for d in hist.index],
+            'dates': dates,
             'prices': safe_list(closes),
             'ma5': safe_list(ma5),
             'ma20': safe_list(ma20),
@@ -609,31 +583,30 @@ def analyze():
     except Exception as e:
         return jsonify({'error': f'분석 중 오류 발생: {str(e)}'})
 
-
 @app.route('/news')
 def get_news():
     ticker = request.args.get('ticker', '').upper()
-    if not ticker:
-        return jsonify({'error': '티커를 입력해주세요.'})
+    if not ticker or not FINNHUB_KEY:
+        return jsonify({'news': []})
     try:
-        stock = yf.Ticker(ticker)
-        news = stock.news or []
+        today = datetime.datetime.now().strftime('%Y-%m-%d')
+        month_ago = (datetime.datetime.now() - datetime.timedelta(days=30)).strftime('%Y-%m-%d')
+        url = f"https://finnhub.io/api/v1/company-news?symbol={ticker}&from={month_ago}&to={today}&token={FINNHUB_KEY}"
+        r = requests.get(url, timeout=10)
+        news = r.json()
         result = []
         for item in news[:8]:
-            # 새 API 구조: content 안에 데이터 있음
-            c = item.get('content', item)
-            title = c.get('title', '')
-            link = (c.get('canonicalUrl') or {}).get('url', '') or (c.get('clickThroughUrl') or {}).get('url', '')
-            pub_str = c.get('pubDate', '')
-            publisher = (c.get('provider') or {}).get('displayName', '')
-            import datetime
-            try:
-                date_str = pub_str[:10] if pub_str else ''
-            except:
-                date_str = ''
-            # 간단한 호재/악재 키워드 분류
+            title = item.get('headline', '')
+            link = item.get('url', '')
+            pub = item.get('datetime', 0)
+            publisher = item.get('source', '')
+            date_str = datetime.datetime.fromtimestamp(pub).strftime('%Y-%m-%d') if pub else ''
+
             bad_keywords = ['하락','급락','손실','적자','위기','악재','소송','제재','리콜','경고','하향','매도','우려','둔화','감소','부진']
             good_keywords = ['상승','급등','호재','실적','흑자','성장','신고가','매수','상향','확대','증가','호조','계약','협약','개발','출시']
+            bad_en = ['fall','drop','decline','loss','lawsuit','recall','warning','downgrade','sell','concern','slow','cut','weak','plunge','slump']
+            good_en = ['rise','surge','gain','profit','growth','high','buy','upgrade','expand','record','deal','launch','beat','soar','jump']
+
             sentiment = '중립'
             for kw in bad_keywords:
                 if kw in title:
@@ -644,9 +617,6 @@ def get_news():
                     if kw in title:
                         sentiment = '호재'
                         break
-            # 영어 키워드도 체크
-            bad_en = ['fall','drop','decline','loss','lawsuit','recall','warning','downgrade','sell','concern','slow','cut','weak']
-            good_en = ['rise','surge','gain','profit','growth','high','buy','upgrade','expand','record','deal','launch','beat']
             title_lower = title.lower()
             if sentiment == '중립':
                 for kw in bad_en:
@@ -658,10 +628,12 @@ def get_news():
                     if kw in title_lower:
                         sentiment = '호재'
                         break
-            result.append({'title': title, 'link': link, 'date': date_str, 'publisher': publisher, 'sentiment': sentiment})
+
+            if title:
+                result.append({'title': title, 'link': link, 'date': date_str, 'publisher': publisher, 'sentiment': sentiment})
         return jsonify({'news': result})
     except Exception as e:
-        return jsonify({'error': str(e)})
+        return jsonify({'news': [], 'error': str(e)})
 
 if __name__ == '__main__':
     print("=" * 50)

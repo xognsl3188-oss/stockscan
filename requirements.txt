@@ -1,6 +1,5 @@
 flask
-yfinance
+requests
 pandas
 numpy
 gunicorn
-curl_cffi
