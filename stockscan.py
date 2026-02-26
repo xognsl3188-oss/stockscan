@@ -1,16 +1,19 @@
 """
-STOCKSCAN — 실시간 주식 기술적 분석기 (Alpha Vantage API)
+STOCKSCAN — 실시간 주식 기술적 분석기 (yfinance)
+=====================================================
+실행 방법:
+  1. 라이브러리 설치:  pip install yfinance flask pandas numpy
+  2. 실행:             python stockscan.py
+  3. 브라우저에서:     http://localhost:5000
 """
 
 from flask import Flask, jsonify, request
+import yfinance as yf
 import pandas as pd
 import numpy as np
-import requests
-import os
 import datetime
 
 app = Flask(__name__)
-AV_KEY = os.environ.get('AV_API_KEY', '')
 
 HTML = """<!DOCTYPE html>
 <html lang="ko">
@@ -46,31 +49,54 @@ HTML = """<!DOCTYPE html>
   .live-badge { margin-left:auto; display:flex; align-items:center; gap:0.5rem; font-family:'Space Mono',monospace; font-size:0.65rem; color:var(--accent); }
   .dot { width:8px; height:8px; border-radius:50%; background:var(--accent); animation:pulse 2s infinite; }
   @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.8)} }
+
   main { max-width:900px; margin:0 auto; padding:2rem; }
-  .search-section { background:var(--surface); border:1px solid var(--border); border-radius:4px; padding:1.5rem; margin-bottom:1.5rem; position:relative; overflow:hidden; }
-  .search-section::before { content:''; position:absolute; top:0; left:0; right:0; height:2px; background:linear-gradient(90deg,transparent,var(--accent),transparent); animation:scan 3s linear infinite; }
+
+  .search-section {
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:4px; padding:1.5rem; margin-bottom:1.5rem;
+    position:relative; overflow:hidden;
+  }
+  .search-section::before {
+    content:''; position:absolute; top:0; left:0; right:0; height:2px;
+    background:linear-gradient(90deg,transparent,var(--accent),transparent);
+    animation:scan 3s linear infinite;
+  }
   @keyframes scan { 0%{transform:translateX(-100%)} 100%{transform:translateX(100%)} }
   .search-label { font-family:'Space Mono',monospace; font-size:0.65rem; color:var(--accent); letter-spacing:3px; margin-bottom:1rem; }
-  .search-input { width:100%; background:var(--bg); border:1px solid var(--border); border-radius:2px; color:var(--text); font-family:'Space Mono',monospace; font-size:1.1rem; padding:1rem 1.2rem; outline:none; transition:border-color 0.2s,box-shadow 0.2s; text-transform:uppercase; letter-spacing:2px; margin-bottom:1rem; }
+  .search-input {
+    width:100%; background:var(--bg); border:1px solid var(--border); border-radius:2px;
+    color:var(--text); font-family:'Space Mono',monospace; font-size:1.1rem;
+    padding:1rem 1.2rem; outline:none; transition:border-color 0.2s,box-shadow 0.2s;
+    text-transform:uppercase; letter-spacing:2px; margin-bottom:1rem;
+  }
   .search-input:focus { border-color:var(--accent); box-shadow:var(--glow); }
   .bottom-row { display:flex; gap:1rem; align-items:center; }
   .market-toggle { display:flex; border:1px solid var(--border); border-radius:2px; overflow:hidden; }
   .market-btn { padding:0.8rem 1.5rem; background:transparent; border:none; cursor:pointer; font-family:'Space Mono',monospace; font-size:0.75rem; color:var(--muted); transition:all 0.2s; }
   .market-btn.active { background:var(--accent); color:var(--bg); font-weight:700; }
-  .analyze-btn { flex:1; padding:0.9rem; background:var(--accent); color:var(--bg); border:none; border-radius:2px; font-family:'Bebas Neue',sans-serif; font-size:1.3rem; letter-spacing:3px; cursor:pointer; transition:all 0.2s; }
-  .analyze-btn:disabled { opacity:0.4; cursor:not-allowed; }
+  .analyze-btn {
+    flex:1; padding:0.9rem; background:var(--accent); color:var(--bg); border:none;
+    border-radius:2px; font-family:'Bebas Neue',sans-serif; font-size:1.3rem;
+    letter-spacing:3px; cursor:pointer; transition:all 0.2s;
+  }
+  .analyze-btn:hover { opacity:0.9; transform:translateY(-1px); }
+  .analyze-btn:disabled { opacity:0.4; cursor:not-allowed; transform:none; }
   .quick-picks { margin-top:1rem; display:flex; gap:0.5rem; flex-wrap:wrap; align-items:center; }
   .qpick-label { font-family:'Space Mono',monospace; font-size:0.6rem; color:var(--muted); }
   .quick-btn { padding:0.3rem 0.8rem; background:transparent; border:1px solid var(--border); border-radius:2px; color:var(--muted); font-family:'Space Mono',monospace; font-size:0.65rem; cursor:pointer; transition:all 0.2s; }
   .quick-btn:hover { border-color:var(--accent); color:var(--accent); }
+
   .loading { text-align:center; padding:4rem; display:none; }
   .loading-text { font-family:'Space Mono',monospace; font-size:0.75rem; color:var(--accent); letter-spacing:3px; animation:blink 1s infinite; }
   @keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.3} }
   .loading-bar { width:200px; height:2px; background:var(--border); margin:1rem auto; border-radius:1px; overflow:hidden; }
   .loading-fill { height:100%; background:var(--accent); animation:ld 1.5s ease-in-out infinite; }
   @keyframes ld { 0%{width:0;margin-left:0} 50%{width:100%;margin-left:0} 100%{width:0;margin-left:100%} }
+
   #results { display:none; animation:fadeIn 0.4s ease; }
   @keyframes fadeIn { from{opacity:0;transform:translateY(10px)} to{opacity:1;transform:translateY(0)} }
+
   .verdict-card { padding:2rem; border-radius:4px; margin-bottom:1.5rem; border:1px solid; }
   .verdict-card.buy { border-color:var(--accent); background:rgba(0,255,136,0.04); }
   .verdict-card.sell { border-color:var(--danger); background:rgba(255,59,92,0.04); }
@@ -90,6 +116,7 @@ HTML = """<!DOCTYPE html>
   .conf-bar { height:3px; background:var(--border); border-radius:2px; }
   .conf-fill { height:100%; border-radius:2px; transition:width 1s ease; }
   .buy .conf-fill { background:var(--accent); } .sell .conf-fill { background:var(--danger); } .hold .conf-fill { background:var(--warn); }
+
   .indicators-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:1rem; margin-bottom:1.5rem; }
   @media(max-width:600px) { .indicators-grid { grid-template-columns:repeat(2,1fr); } }
   .ind-card { background:var(--surface); border:1px solid var(--border); border-radius:4px; padding:1.2rem; }
@@ -98,11 +125,14 @@ HTML = """<!DOCTYPE html>
   .ind-signal { font-size:0.75rem; margin-top:0.3rem; font-family:'Space Mono',monospace; }
   .ind-desc { margin-top:0.6rem; font-size:0.75rem; color:var(--muted); line-height:1.6; border-top:1px solid var(--border); padding-top:0.6rem; }
   .sig-buy { color:var(--accent); } .sig-sell { color:var(--danger); } .sig-neutral { color:var(--warn); }
+
   .chart-section { background:var(--surface); border:1px solid var(--border); border-radius:4px; padding:1.5rem; margin-bottom:1.5rem; }
   .chart-title { font-family:'Space Mono',monospace; font-size:0.65rem; color:var(--accent); letter-spacing:3px; margin-bottom:1rem; }
+
   .summary-box { background:var(--surface); border:1px solid var(--border); border-radius:4px; padding:1.5rem; margin-bottom:1.5rem; }
   .summary-title { font-family:'Space Mono',monospace; font-size:0.65rem; color:var(--muted); letter-spacing:3px; margin-bottom:1rem; }
   .summary-text { font-size:0.95rem; line-height:1.8; }
+
   .news-section { background:var(--surface); border:1px solid var(--border); border-radius:4px; padding:1.5rem; margin-bottom:1.5rem; }
   .news-title { font-family:'Space Mono',monospace; font-size:0.65rem; color:var(--accent); letter-spacing:3px; margin-bottom:1rem; }
   .news-item { padding:0.8rem 0; border-bottom:1px solid var(--border); display:flex; gap:0.8rem; align-items:flex-start; }
@@ -115,37 +145,47 @@ HTML = """<!DOCTYPE html>
   .news-headline { font-size:0.85rem; line-height:1.5; color:var(--text); text-decoration:none; }
   .news-headline:hover { color:var(--accent); }
   .news-meta { font-family:'Space Mono',monospace; font-size:0.6rem; color:var(--muted); margin-top:0.3rem; }
+
   .error-box { background:rgba(255,59,92,0.08); border:1px solid var(--danger); border-radius:4px; padding:1.5rem; color:var(--danger); font-family:'Space Mono',monospace; font-size:0.8rem; line-height:1.8; margin-bottom:1.5rem; }
   .disclaimer { padding:1rem; border:1px solid var(--border); border-radius:2px; font-family:'Space Mono',monospace; font-size:0.6rem; color:var(--muted); line-height:1.8; margin-bottom:1rem; }
-  .footer-support { margin-top:2rem; padding:1.5rem 2rem; border:1px solid var(--border); border-radius:4px; text-align:center; background:var(--surface); }
-  .footer-support .made-by { font-family:'Space Mono',monospace; font-size:0.6rem; color:var(--muted); letter-spacing:2px; margin-bottom:0.8rem; }
-  .footer-support .support-msg { font-size:0.85rem; color:var(--text); margin-bottom:0.8rem; line-height:1.6; }
-  .footer-support .account { font-family:'Space Mono',monospace; font-size:0.9rem; color:var(--accent); letter-spacing:1px; padding:0.6rem 1.2rem; border:1px solid var(--accent); border-radius:4px; display:inline-block; margin-top:0.3rem; }
+
+  .footer-info {
+    margin-top:2rem; padding:1rem 2rem;
+    border-top:1px solid var(--border);
+    text-align:center; font-family:'Space Mono',monospace;
+    font-size:0.6rem; color:var(--muted);
+  }
+  .footer-info a { color:var(--muted); text-decoration:none; }
+  .footer-info a:hover { color:var(--accent); }
 </style>
 </head>
 <body>
 <header>
   <div class="logo">STOCK<span>SCAN</span></div>
-  <div class="live-badge"><div class="dot"></div>LIVE DATA</div>
+  <div class="live-badge"><div class="dot"></div>LIVE DATA · Yahoo Finance</div>
 </header>
 <main>
   <div class="search-section">
     <div class="search-label">▶ 종목 입력 / TICKER SYMBOL</div>
-    <input class="search-input" id="tickerInput" placeholder="예: IBM, AAPL, TSLA" autocomplete="off" autocorrect="off" spellcheck="false" />
+    <input class="search-input" id="tickerInput" placeholder="예: IBM, AAPL, 005930 (삼성전자)" autocomplete="off" autocorrect="off" spellcheck="false" />
     <div class="bottom-row">
+      <div class="market-toggle">
+        <button class="market-btn active" id="btnUS" onclick="setMarket('US')">🇺🇸 US</button>
+        <button class="market-btn" id="btnKR" onclick="setMarket('KR')">🇰🇷 KR</button>
+      </div>
       <button class="analyze-btn" id="analyzeBtn" onclick="analyze()">SCAN</button>
     </div>
     <div class="quick-picks">
       <span class="qpick-label">빠른 선택:</span>
-      <button class="quick-btn" onclick="quick('IBM')">IBM</button>
-      <button class="quick-btn" onclick="quick('AAPL')">AAPL</button>
-      <button class="quick-btn" onclick="quick('NVDA')">NVDA</button>
-      <button class="quick-btn" onclick="quick('TSLA')">TSLA</button>
-      <button class="quick-btn" onclick="quick('META')">META</button>
-      <button class="quick-btn" onclick="quick('MSFT')">MSFT</button>
-    </div>
-    <div style="margin-top:0.8rem;font-family:'Space Mono',monospace;font-size:0.58rem;color:var(--muted);">
-      ⚠ Alpha Vantage 무료 플랜: 미국 주식만 지원, 분당 5회 제한
+      <button class="quick-btn" onclick="quick('IBM','US')">IBM</button>
+      <button class="quick-btn" onclick="quick('AAPL','US')">AAPL</button>
+      <button class="quick-btn" onclick="quick('NVDA','US')">NVDA</button>
+      <button class="quick-btn" onclick="quick('TSLA','US')">TSLA</button>
+      <button class="quick-btn" onclick="quick('META','US')">META</button>
+      <button class="quick-btn" onclick="quick('005930','KR')">삼성전자</button>
+      <button class="quick-btn" onclick="quick('000660','KR')">SK하이닉스</button>
+      <button class="quick-btn" onclick="quick('035420','KR')">NAVER</button>
+      <button class="quick-btn" onclick="quick('035720','KR')">카카오</button>
     </div>
   </div>
 
@@ -160,24 +200,32 @@ HTML = """<!DOCTYPE html>
   <div class="disclaimer">
     ⚠ 본 서비스는 기술적 분석 기반의 참고용 정보를 제공하며, 투자 권유가 아닙니다. 실제 투자 결정은 본인의 판단과 책임 하에 이루어져야 합니다.
   </div>
-  <div class="footer-support">
-    <div class="made-by">MADE BY 김태훈</div>
-    <div class="support-msg">무료로 배포 가능하나, 도움이 되셨다면 후원 부탁드립니다 🙏<br>소중한 후원이 서비스 유지에 큰 힘이 됩니다!</div>
-    <div class="account">카카오뱅크 3333-03-5584101 · 김태훈</div>
+
+  <div class="footer-info">
+    MADE BY 김태훈 · <a href="mailto:xognsl3188@gmail.com">xognsl3188@gmail.com</a>
   </div>
 </main>
 
 <script>
+let currentMarket = 'US';
 let priceChart = null;
 
-function quick(t) {
+function setMarket(m) {
+  currentMarket = m;
+  document.getElementById('btnUS').classList.toggle('active', m==='US');
+  document.getElementById('btnKR').classList.toggle('active', m==='KR');
+}
+
+function quick(t, m) {
   document.getElementById('tickerInput').value = t;
+  setMarket(m);
   analyze();
 }
 
 async function analyze() {
   let ticker = document.getElementById('tickerInput').value.trim().toUpperCase();
   if(!ticker) { alert('종목명을 입력해주세요!'); return; }
+  if(currentMarket === 'KR' && !ticker.includes('.')) ticker += '.KS';
 
   document.getElementById('results').style.display = 'none';
   document.getElementById('loading').style.display = 'block';
@@ -188,7 +236,7 @@ async function analyze() {
     const data = await res.json();
     document.getElementById('loading').style.display = 'none';
     if(data.error) {
-      document.getElementById('results').innerHTML = `<div class="error-box">❌ ${data.error}</div>`;
+      document.getElementById('results').innerHTML = `<div class="error-box">❌ ${data.error}<br><br>한국 주식: 종목코드.KS (예: 005930.KS)<br>미국 주식: 심볼 그대로 (예: AAPL)</div>`;
       document.getElementById('results').style.display = 'block';
     } else {
       renderResults(data);
@@ -249,7 +297,7 @@ function renderResults(d) {
     <div class="indicators-grid">${indsHTML}</div>
     <div class="chart-section">
       <div class="chart-title">▶ 60일 실제 가격 차트 + 이동평균선</div>
-      <canvas id="priceChart"></canvas>
+      <canvas id="priceChart" style="max-height:300px"></canvas>
     </div>
     <div class="summary-box">
       <div class="summary-title">▶ 종합 분석 의견</div>
@@ -258,6 +306,22 @@ function renderResults(d) {
   `;
   document.getElementById('results').style.display = 'block';
   setTimeout(() => drawChart(d), 100);
+
+  fetch('/news?ticker=' + encodeURIComponent(d.ticker))
+    .then(r => r.json())
+    .then(nd => {
+      if(nd.news && nd.news.length > 0) {
+        const html = nd.news.map(n => `<div class="news-item">
+          <span class="news-badge badge-${n.sentiment}">${n.sentiment}</span>
+          <div class="news-content">
+            <a href="${n.link}" target="_blank" class="news-headline">${n.title}</a>
+            <div class="news-meta">${n.publisher} · ${n.date}</div>
+          </div>
+        </div>`).join('');
+        document.getElementById('results').insertAdjacentHTML('beforeend',
+          `<div class="news-section"><div class="news-title">▶ 최근 뉴스 (호재 / 악재)</div>${html}</div>`);
+      }
+    }).catch(()=>{});
 }
 
 function drawChart(d) {
@@ -319,47 +383,31 @@ def index():
 
 @app.route('/analyze')
 def analyze():
-    ticker = request.args.get('ticker', '').upper().strip()
+    ticker = request.args.get('ticker', '').upper()
     if not ticker:
         return jsonify({'error': '티커를 입력해주세요.'})
-    if not AV_KEY:
-        return jsonify({'error': 'API 키가 설정되지 않았습니다.'})
     try:
-        url = f"https://www.alphavantage.co/query?function=TIME_SERIES_DAILY&symbol={ticker}&outputsize=compact&apikey={AV_KEY}"
-        r = requests.get(url, timeout=15)
-        data = r.json()
+        stock = yf.Ticker(ticker)
+        hist = stock.history(period='4mo')
+        if hist.empty or len(hist) < 30:
+            return jsonify({'error': f"'{ticker}' 데이터를 찾을 수 없습니다."})
 
-        if 'Note' in data:
-            return jsonify({'error': 'API 호출 한도 초과입니다. 1분 후 다시 시도해주세요. (무료 플랜: 분당 5회)'})
-        if 'Error Message' in data:
-            return jsonify({'error': f"'{ticker}' 종목을 찾을 수 없습니다. 미국 주식 티커를 확인해주세요."})
-        if 'Time Series (Daily)' not in data:
-            return jsonify({'error': f"데이터를 가져올 수 없습니다. 잠시 후 다시 시도해주세요."})
-
-        ts = data['Time Series (Daily)']
-        dates_raw = sorted(ts.keys())[-60:]
-        dates = dates_raw
-        closes = pd.Series([float(ts[d]['4. close']) for d in dates_raw])
-        volumes = pd.Series([float(ts[d]['5. volume']) for d in dates_raw])
+        hist = hist.tail(60)
+        closes = hist['Close']
+        info = stock.info
 
         current = float(closes.iloc[-1])
         prev = float(closes.iloc[-2])
         price_change = (current - prev) / prev * 100
-        price_fmt = f"${current:,.2f}"
-
-        # 회사 이름
-        try:
-            overview = requests.get(f"https://www.alphavantage.co/query?function=OVERVIEW&symbol={ticker}&apikey={AV_KEY}", timeout=5).json()
-            name = overview.get('Name', '')
-        except:
-            name = ''
+        is_kr = ticker.endswith('.KS') or ticker.endswith('.KQ')
+        price_fmt = f"{current:,.0f}원" if is_kr else f"${current:,.2f}"
 
         rsi = calc_rsi(closes)
         rsi_val = float(rsi.iloc[-1])
-        macd_line, signal_line, macd_hist = calc_macd(closes)
+        macd_line, _, macd_hist = calc_macd(closes)
         macd_val = float(macd_line.iloc[-1])
         hist_val = float(macd_hist.iloc[-1])
-        bb_upper, bb_mid, bb_lower = calc_bollinger(closes)
+        bb_upper, _, bb_lower = calc_bollinger(closes)
         bb_u = float(bb_upper.iloc[-1])
         bb_l = float(bb_lower.iloc[-1])
         bb_pos = (current - bb_l) / (bb_u - bb_l) * 100 if (bb_u - bb_l) > 0 else 50
@@ -369,8 +417,8 @@ def analyze():
         ma5_val = float(ma5.iloc[-1])
         ma20_val = float(ma20.iloc[-1])
         ma60_val = float(ma60.iloc[-1]) if len(closes) >= 60 else float(ma20.iloc[-1])
-        vol = float(volumes.iloc[-1])
-        avg_vol = float(volumes.mean())
+        vol = float(hist['Volume'].iloc[-1])
+        avg_vol = float(hist['Volume'].mean())
         vol_ratio = vol / avg_vol if avg_vol > 0 else 1
         support = float(closes.tail(20).min())
         resistance = float(closes.tail(20).max())
@@ -391,45 +439,102 @@ def analyze():
         elif bb_pos > 85: sell_score += 1; indicators.append({'name':'볼린저밴드','verdict':'매도','detail':f'상단 근접 ({bb_pos:.0f}%)'})
         else: indicators.append({'name':'볼린저밴드','verdict':'중립','detail':f'중간 ({bb_pos:.0f}%)'})
 
-        if hist_val > 0 and macd_val > 0: buy_score += 1; indicators.append({'name':'MACD','verdict':'매수','detail':'양전환'})
-        elif hist_val < 0 and macd_val < 0: sell_score += 1; indicators.append({'name':'MACD','verdict':'매도','detail':'음전환'})
-        else: indicators.append({'name':'MACD','verdict':'중립','detail':'전환점 대기'})
+        if hist_val > 0 and macd_val > 0: buy_score += 1; indicators.append({'name':'MACD','verdict':'매수','detail':'히스토그램 양전환'})
+        elif hist_val < 0 and macd_val < 0: sell_score += 1; indicators.append({'name':'MACD','verdict':'매도','detail':'히스토그램 음전환'})
+        else: indicators.append({'name':'MACD','verdict':'중립','detail':'전환점 관찰 중'})
 
         if vol_ratio > 1.5:
             if price_change > 0: buy_score += 1; indicators.append({'name':'거래량','verdict':'매수','detail':f'급증+상승 ({vol_ratio:.1f}x)'})
             else: sell_score += 1; indicators.append({'name':'거래량','verdict':'매도','detail':f'급증+하락 ({vol_ratio:.1f}x)'})
-        else: indicators.append({'name':'거래량','verdict':'중립','detail':f'{vol_ratio:.1f}x'})
+        else: indicators.append({'name':'거래량','verdict':'중립','detail':f'평균 수준 ({vol_ratio:.1f}x)'})
 
-        if dist_sup < 3: buy_score += 1; indicators.append({'name':'지지/저항','verdict':'매수','detail':f'지지선 근접'})
-        elif dist_res < 3: sell_score += 1; indicators.append({'name':'지지/저항','verdict':'매도','detail':f'저항선 근접'})
-        else: indicators.append({'name':'지지/저항','verdict':'중립','detail':f'지지 +{dist_sup:.1f}%'})
+        if dist_sup < 3: buy_score += 1; indicators.append({'name':'지지/저항','verdict':'매수','detail':f'지지선 근접 (+{dist_sup:.1f}%)'})
+        elif dist_res < 3: sell_score += 1; indicators.append({'name':'지지/저항','verdict':'매도','detail':f'저항선 근접 (-{dist_res:.1f}%)'})
+        else: indicators.append({'name':'지지/저항','verdict':'중립','detail':f'지지 +{dist_sup:.1f}% / 저항 -{dist_res:.1f}%'})
 
         verdict = '매수' if buy_score > sell_score + 1 else '매도' if sell_score > buy_score + 1 else '관망'
         confidence = max(buy_score, sell_score) / (buy_score + sell_score + 2) * 100
 
         v_color = {'매수':'<strong style="color:#00ff88">매수 신호</strong>','매도':'<strong style="color:#ff3b5c">매도 신호</strong>','관망':'<strong style="color:#ffb800">관망</strong>'}
-        summary = f"<strong>{ticker}</strong> 분석 결과 {v_color[verdict]}가 우세합니다 (매수 {buy_score}점 vs 매도 {sell_score}점). "
-        summary += f"RSI {rsi_val:.1f} — {'과매도 구간, 반등 가능성.' if rsi_val<30 else '과매수 구간, 조정 가능성.' if rsi_val>70 else '중립.'} "
-        summary += f"{'단기선 중장기선 상회, 상승 모멘텀.' if ma5_val>ma20_val else '단기선 중장기선 하회, 하락 압력.'} "
-        summary += f"볼린저밴드 {bb_pos:.0f}%, 거래량 평균 대비 {vol_ratio:.1f}배."
+        summary = f"<strong>{ticker}</strong> 종목 분석 결과, 전반적으로 {v_color[verdict]}가 우세합니다 (매수 {buy_score}점 vs 매도 {sell_score}점). "
+        summary += f"RSI는 {rsi_val:.1f}로 {'과매도 구간, 반등 가능성.' if rsi_val<30 else '과매수 구간, 조정 가능성.' if rsi_val>70 else '중립 구간.'} "
+        summary += f"{'단기 이동평균이 중장기선을 상회, 상승 모멘텀.' if ma5_val>ma20_val else '단기 이동평균이 중장기선을 하회, 하락 압력.'} "
+        summary += f"볼린저밴드 위치 {bb_pos:.0f}%, 거래량 평균 대비 {vol_ratio:.1f}배."
 
         def safe_list(s):
             return [None if (v is None or (isinstance(v, float) and np.isnan(v))) else round(float(v), 4) for v in s]
 
         return jsonify({
-            'ticker': ticker, 'name': name, 'price_fmt': price_fmt,
-            'price_change': price_change, 'verdict': verdict,
-            'buy_score': buy_score, 'sell_score': sell_score, 'confidence': confidence,
-            'indicators': indicators, 'summary': summary, 'dates': dates,
-            'prices': safe_list(closes), 'ma5': safe_list(ma5), 'ma20': safe_list(ma20),
-            'bb_upper': safe_list(bb_upper), 'bb_lower': safe_list(bb_lower),
+            'ticker': ticker,
+            'name': info.get('shortName', info.get('longName', '')),
+            'price_fmt': price_fmt,
+            'price_change': price_change,
+            'verdict': verdict,
+            'buy_score': buy_score,
+            'sell_score': sell_score,
+            'confidence': confidence,
+            'indicators': indicators,
+            'summary': summary,
+            'dates': [str(d.date()) for d in hist.index],
+            'prices': safe_list(closes),
+            'ma5': safe_list(ma5),
+            'ma20': safe_list(ma20),
+            'bb_upper': safe_list(bb_upper),
+            'bb_lower': safe_list(bb_lower),
         })
-
     except Exception as e:
-        return jsonify({'error': f'오류 발생: {str(e)}'})
+        return jsonify({'error': f'분석 중 오류 발생: {str(e)}'})
+
+@app.route('/news')
+def get_news():
+    ticker = request.args.get('ticker', '').upper()
+    if not ticker:
+        return jsonify({'news': []})
+    try:
+        stock = yf.Ticker(ticker)
+        news = stock.news or []
+        result = []
+        for item in news[:8]:
+            c = item.get('content', item)
+            title = c.get('title', '')
+            link = (c.get('canonicalUrl') or {}).get('url', '') or c.get('link', '')
+            pub_ts = c.get('pubDate', '') or c.get('providerPublishTime', 0)
+            publisher = (c.get('provider') or {}).get('displayName', '') or c.get('publisher', '')
+            try:
+                if isinstance(pub_ts, (int, float)) and pub_ts > 0:
+                    date_str = datetime.datetime.fromtimestamp(pub_ts).strftime('%Y-%m-%d')
+                else:
+                    date_str = str(pub_ts)[:10]
+            except:
+                date_str = ''
+
+            bad_kr = ['하락','급락','손실','적자','위기','악재','소송','제재','리콜','경고','하향','매도','우려','둔화','감소','부진']
+            good_kr = ['상승','급등','호재','실적','흑자','성장','신고가','매수','상향','확대','증가','호조','계약','협약','개발','출시']
+            bad_en = ['fall','drop','decline','loss','lawsuit','recall','warning','downgrade','sell','concern','slow','cut','weak','plunge']
+            good_en = ['rise','surge','gain','profit','growth','high','buy','upgrade','expand','record','deal','launch','beat','soar']
+
+            sentiment = '중립'
+            for kw in bad_kr:
+                if kw in title: sentiment = '악재'; break
+            if sentiment == '중립':
+                for kw in good_kr:
+                    if kw in title: sentiment = '호재'; break
+            tl = title.lower()
+            if sentiment == '중립':
+                for kw in bad_en:
+                    if kw in tl: sentiment = '악재'; break
+            if sentiment == '중립':
+                for kw in good_en:
+                    if kw in tl: sentiment = '호재'; break
+
+            if title:
+                result.append({'title': title, 'link': link, 'date': date_str, 'publisher': publisher, 'sentiment': sentiment})
+        return jsonify({'news': result})
+    except Exception as e:
+        return jsonify({'news': [], 'error': str(e)})
 
 if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
+    port = int(__import__('os').environ.get('PORT', 5000))
     print("=" * 50)
     print("  STOCKSCAN 실행 중...")
     print(f"  브라우저에서 http://localhost:{port} 접속!")
